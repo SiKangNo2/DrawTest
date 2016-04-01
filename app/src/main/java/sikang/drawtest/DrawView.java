@@ -118,48 +118,36 @@ public class DrawView extends View implements Animator.AnimatorListener {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        float eventX = event.getX();
-        float eventY = event.getY();
-        //阻止父级拦截
         switch (event.getAction() & MotionEvent.ACTION_MASK) {
             case MotionEvent.ACTION_DOWN:
-                long time = System.currentTimeMillis();
-                isDoubleClick = false;
-                if (!isEnlarging && time - lastClickTime <= 1000) {
-                    if (Math.abs(event.getRawX() - startRawX) <= 20 && Math.abs(event.getRawY() - startRawY) <= 20) {
-                        if (isEnlarged) {
-                            scaleViewAnimator(3f, -(eventX - getWidth() / 2), -(eventY - getHeight() / 2));
-                        } else {
-                            scaleViewAnimator(1f, 0f, 0f);
-                        }
-                        isDoubleClick = true;
-                        isEnlarged = !isEnlarged;
-                        lastClickTime = 0;
-                    }
-                }
-                startRawX = event.getRawX();
-                startRawY = event.getRawY();
-                lastClickTime = time;
-                touchDown(eventX, eventY);
+                //是否双击（双击放大画板3倍，进行细节绘制）
+                checkDoubleClick(event);
+                //记录按下时相关参数
+                touchDown(event);
                 break;
             case MotionEvent.ACTION_MOVE:
-                if (!isDoubleClick) {
-                    if (event.getPointerCount() == 1)
+                //双击后继续拖动手指进行可自由缩放
+                if (isDoubleClick) {
+                    if (isEnlarged)
+                        scaleView(event);
+                } else {
+                    //单指移动进行路径绘制
+                    if (event.getPointerCount() == 1) {
                         if (!isDoubleTouch)
                             touchMove(event);
-                    if (event.getPointerCount() == 2) {
+                    } else if (event.getPointerCount() == 2) {
+                        //双指移动时，如果当前为放大状态，则拖动画板（区域绘制）
                         isDoubleTouch = true;
-                        if (!isEnlarged)
+                        if (isEnlarged)
                             moveView(event.getRawX(), event.getRawY());
                     }
-                } else {
-                    scaleView(event.getRawX(), event.getRawY());
                 }
                 break;
             case MotionEvent.ACTION_UP:
                 if (isDoubleClick) {
                 } else if (!isDoubleTouch) {
-                    touchUp(eventX, eventY);
+                    //单指抬起，进行绘制结束的完善工作
+                    touchUp(event);
                 } else
                     isDoubleTouch = false;
 
@@ -169,40 +157,94 @@ public class DrawView extends View implements Animator.AnimatorListener {
         return true;
     }
 
+    /**
+     * 是否双击
+     *
+     * @param event 触摸点
+     */
+    private void checkDoubleClick(MotionEvent event) {
+        long time = System.currentTimeMillis();
+        isDoubleClick = false;
+        if (!isEnlarging && time - lastClickTime <= 500) {
+            if (Math.abs(event.getRawX() - startRawX) <= 20 && Math.abs(event.getRawY() - startRawY) <= 20) {
+                isEnlarged = !isEnlarged;
+                if (isEnlarged) {
+                    scaleViewAnimator(3f, -(event.getX() - getWidth() / 2), -(event.getY() - getHeight() / 2));
+                } else {
+                    scaleViewAnimator(1f, 0f, 0f);
+                }
+                isDoubleClick = true;
+                lastClickTime = 0;
+            }
+        }
+        startRawX = event.getRawX();
+        startRawY = event.getRawY();
+        mTranX = getTranslationX();
+        mTranY = getTranslationY();
+        lastClickTime = time;
+    }
 
-    private void touchDown(float x, float y) {
+    /**
+     * 记录按下时的相关数据
+     *
+     * @param event 触摸点
+     */
+    private void touchDown(MotionEvent event) {
+        float x = event.getX();
+        float y = event.getY();
         getParent().requestDisallowInterceptTouchEvent(true);
         lastTouchX = x;
         lastTouchY = y;
         mPath.moveTo(x, y);
         updateRect(x, y);
-        mScale = getScaleX();
         linePoints.add(new LinePoint(x, y, true));
 
     }
 
+    /**
+     * 拖动画板
+     *
+     * @param rawX 当前触摸点的x坐标
+     * @param rawY 当前触摸点的y坐标
+     */
     private void moveView(float rawX, float rawY) {
-        setTranslationX(getTranslationX() + (rawX - startRawX));
-        setTranslationY(getTranslationY() + (rawY - startRawY));
-        startRawX = rawX;
-        startRawY = rawY;
+        setTranslationX(mTranX + (rawX - startRawX));
+        setTranslationY(mTranY + (rawY - startRawY));
     }
 
-    private float mScale;
+    private float mScale, mTranX, mTranY;
 
-    private void scaleView(float rawX, float rawY) {
+    /**
+     * 缩放画板（双击放大后不松开继续移动手指时自由缩放）
+     *
+     * @param event 触摸点
+     */
+    private void scaleView(MotionEvent event) {
         float scale;
-        if (Math.abs(rawX - startRawX) > Math.abs(rawY - startRawY)) {
-            scale = mScale + (rawX - startRawX) / getWidth();
-
+        if (Math.abs(event.getRawX() - startRawX) > Math.abs(event.getRawY() - startRawY)) {
+            scale = mScale + ((event.getRawX() - startRawX) / getWidth()) * 10;
         } else {
-            scale = mScale + (rawY - startRawY) / getHeight();
+            scale = mScale - ((event.getRawY() - startRawY) / getHeight()) * 10;
+        }
+        Log.d(TAG, "width: " + scale);
+        if (scale < 1f) {
+            scale = 1f;
+            mScale = 1f;
+            startRawX = event.getRawX();
+            startRawY = event.getRawY();
         }
         setScaleX(scale);
         setScaleY(scale);
     }
 
+    /**
+     * 绘制path
+     *
+     * @param event 触摸点
+     */
     private void touchMove(MotionEvent event) {
+        if ((Math.abs(event.getRawX() - startRawX) < 20 && Math.abs(event.getRawY() - startRawY) < 20))
+            return;
         int historySize = event.getHistorySize();
         for (int i = 0; i < historySize; i++) {
             float historyX = event.getHistoricalX(i);
@@ -214,6 +256,12 @@ public class DrawView extends View implements Animator.AnimatorListener {
 
     }
 
+    /**
+     * 更新路径
+     *
+     * @param x 触摸点的x坐标
+     * @param y 触摸点的y坐标
+     */
     private void addLine(float x, float y) {
         float cx1 = lastTouchX + (x - lastTouchX) / 4;
         float cy1 = lastTouchY + (y - lastTouchY) / 4;
@@ -223,6 +271,7 @@ public class DrawView extends View implements Animator.AnimatorListener {
         lastTouchX = x;
         lastTouchY = y;
     }
+
 
     private void updateRect(float x, float y) {
         mLeft = Math.min(mLeft, x);
@@ -282,18 +331,37 @@ public class DrawView extends View implements Animator.AnimatorListener {
         animSet.start();
     }
 
+    /**
+     * 缩放和位移动画（区域放大和还原）
+     *
+     * @param scale 要缩放的比例
+     * @param tranX x轴位移的距离
+     * @param tranY y轴位移的距离
+     */
     public void scaleViewAnimator(float scale, float tranX, float tranY) {
         AnimatorSet animSet = new AnimatorSet();
         ObjectAnimator viewScaleX = ObjectAnimator.ofFloat(this, "scaleX", getScaleX(), scale);
         ObjectAnimator viewScaleY = ObjectAnimator.ofFloat(this, "scaleY", getScaleX(), scale);
         ObjectAnimator viewTranX = ObjectAnimator.ofFloat(this, "translationX", getTranslationX(), tranX);
         ObjectAnimator viewTranY = ObjectAnimator.ofFloat(this, "translationY", getTranslationY(), tranY);
+        animSet.addListener(this);
         animSet.play(viewScaleX).with(viewScaleY).with(viewTranX).with(viewTranY);
         animSet.setDuration(300);
         animSet.start();
     }
 
-    private void touchUp(float x, float y) {
+
+    /**
+     * 抬起手指时数据保存
+     *
+     * @param event 触摸点
+     */
+    private void touchUp(MotionEvent event) {
+        if (Math.abs(event.getRawX() - startRawX) <= 20 && Math.abs(event.getRawY() - startRawY) <= 20) {
+            return;
+        }
+        float x = event.getX();
+        float y = event.getY();
         getParent().requestDisallowInterceptTouchEvent(true);
         float cx1 = lastTouchX + (x - lastTouchX) / 4;
         float cy1 = lastTouchY + (y - lastTouchY) / 4;
@@ -312,6 +380,7 @@ public class DrawView extends View implements Animator.AnimatorListener {
         updateRect(x, y);
         linePoints.add(new LinePoint(x, y, false));
     }
+
 
     public void onDestory() {
         if (mCanvas != null) {
@@ -335,14 +404,7 @@ public class DrawView extends View implements Animator.AnimatorListener {
     @Override
     public void onAnimationEnd(Animator animation) {
         isEnlarging = false;
-        if (isEnlarged) {
-            setScaleX(1f);
-            setScaleY(1f);
-        } else {
-            setScaleX(3f);
-            setScaleY(3f);
-        }
-
+        mScale = getScaleX();
     }
 
     @Override
